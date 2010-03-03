@@ -44,8 +44,8 @@ class MapHandler(ContentHandler):
         def add_way_node(attrs):
             ref = int(attrs.get("ref"))
             assert(ref in self.nodes)
-            current_way.append(self.nodes[ref])
-            self.nodes_ways[ref].append(current_way)
+            current_way.append((ref,self.nodes[ref]))
+            self.nodes_ways[ref].append((id,current_way))
         def way_tag(attrs):
             pass
         self.start_methods["nd"] = add_way_node
@@ -63,9 +63,9 @@ class MapHandler(ContentHandler):
             type = attrs.get("type")
             ref = int(attrs.get("ref"))
             if type == "way" and ref in self.ways:
-                current_relation_ways.append(ref)
+                current_relation_ways.append((ref,self.ways[ref]))
             elif type == "node" and ref in self.nodes:
-                current_relation_nodes.append(ref)
+                current_relation_nodes.append((ref,self.nodes[ref]))
             else:
                 print "unknow member type=%s ref=%d" % (type,ref)
         def relation_tag(attrs):
@@ -79,29 +79,46 @@ class MapHandler(ContentHandler):
     def __repr__(self):
         return "bounds=%s nnodes=%d nways=%d nrelation=%d" % (repr(self.bounds),len(self.nodes),len(self.ways),len(self.relations))
 
-    def prune_nodes_and_ways_in_relation(self):
-        pruned_nodes = []
-        pruned_ways = []
+    def __prune_node(self,nodeid,node,pruned_nodes):
+        try:
+            pruned_nodes.append(node)
+            del self.nodes[nodeid]
+        except KeyError:
+            pass
+            #print "unknown nodeid %d while pruning" % nodeid
+
+    def __prune_way(self,wayid,way,pruned_nodes,pruned_ways):
+        try:
+            pruned_ways.append(way)
+            del self.ways[wayid]
+            for nodeid,node in way: self.__prune_node(nodeid,node,pruned_nodes)
+        except KeyError:
+            pass
+            #print "unknown wayid %d while pruning" % wayid
+
+    def prune_nodes_and_ways_in_relation(self, pruned_nodes, pruned_ways):
         for relation_ways,relation_nodes in self.relations.values():
-            for wayid in relation_ways:
-                try:
-                    pruned_ways.append(self.ways[wayid])
-                    del self.ways[wayid]
-                except KeyError:
-                    pass
-            for nodeid in relation_nodes:
-                pruned_nodes.append(self.nodes[nodeid])
-                del self.nodes[nodeid]
-        print "pruned %d nodes and %d ways while removing relation" % (len(pruned_nodes),len(pruned_ways))
-        return pruned_nodes
-    def prune_unused_nodes(self):
-        pruned_nodes = []
+            for wayid,way in relation_ways: self.__prune_way(wayid,way,pruned_nodes,pruned_ways)
+            for nodeid,node in relation_nodes: self.__prune_node(nodeid,node,pruned_nodes)
+        print "pruned %d nodes and %d ways while removing %d relations" % (len(pruned_nodes),len(pruned_ways),len(self.relations))
+    def prune_cycle_ways(self, pruned_nodes, pruned_ways):
+        for wayid,way in self.ways.items():
+            nnode_connected = 0
+            has_cycle = False
+            nodeids = []
+            for nodeid,node in way:
+                if len(self.nodes_ways[nodeid]) > 1:
+                    nnode_connected += 1
+                if not has_cycle and nodeid in nodeids:
+                    has_cycle = True
+                nodeids.append(nodeid)
+            if has_cycle and nnode_connected == 2:
+                self.__prune_way(wayid,way,pruned_nodes,pruned_ways)
+        print "pruned %d nodes and %d ways while removing cycles" % (len(pruned_nodes),len(pruned_ways))
+    def prune_unused_nodes(self,pruned_nodes):
         for id,node in self.nodes.items():
-            if not self.nodes_ways[id]:
-                pruned_nodes.append(node)
-                del self.nodes[id]
+            if not self.nodes_ways[id]: self.__prune_node(id,node,pruned_nodes)
         print "pruned %d unused nodes" % len(pruned_nodes)
-        return pruned_nodes
         
 def load_osm(filename):
     handler = MapHandler()
@@ -109,19 +126,35 @@ def load_osm(filename):
     return handler
 
 map = load_osm("quetigny.osm")
-map.prune_nodes_and_ways_in_relation()
-unused_nodes = map.prune_unused_nodes()
-unused_nodes = array(unused_nodes)
+unused_nodes = []
+unused_ways = []
+map.prune_nodes_and_ways_in_relation(unused_nodes,unused_ways)
+map.prune_cycle_ways(unused_nodes,unused_ways)
+map.prune_unused_nodes(unused_nodes)
 print map
 
 figure()
-crossing_nodes = array([node for id,node in map.nodes.items() if len(map.nodes_ways[id]) > 1])
+title("pruned data")
+unused_nodes = array(unused_nodes)
 plot(unused_nodes[:,0],unused_nodes[:,1],'ro')
-plot(crossing_nodes[:,0],crossing_nodes[:,1],'go')
+nodes = array(map.nodes.values())
+plot(nodes[:,0],nodes[:,1],'go')
+
+for way in unused_ways:
+    foo = array([node for id,node in way])
+    plot(foo[:,0],foo[:,1],'r')
 
 for way in map.ways.values():
-    foo = array(way)
+    foo = array([node for id,node in way])
+    plot(foo[:,0],foo[:,1],'g')
+
+figure()
+crossing_nodes = array([node for id,node in map.nodes.items() if len(map.nodes_ways[id]) > 1])
+plot(crossing_nodes[:,0],crossing_nodes[:,1],'og')
+for way in map.ways.values():
+    foo = array([node for id,node in way])
     plot(foo[:,0],foo[:,1])
+
 
 show()
 
