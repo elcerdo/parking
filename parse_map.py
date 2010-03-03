@@ -125,7 +125,15 @@ def load_osm(filename):
     parse(filename,handler)
     return handler
 
-map = load_osm("quetigny.osm")
+from sys import argv
+
+filename = "quetigny.osm"
+if len(argv) > 1:
+    filename = argv[1]
+
+print "loading %s" % filename
+map = load_osm(filename)
+
 unused_nodes = []
 unused_ways = []
 map.prune_nodes_and_ways_in_relation(unused_nodes,unused_ways)
